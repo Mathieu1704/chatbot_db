@@ -1,0 +1,17 @@
+# Environnements Python
+venv/
+.env/
+icare_gpu/
+
+
+# Dépendances Node
+node_modules/
+
+# Fichiers de logs et caches
+*.log
+__pycache__/
+npm-debug.log*
+
+# Builds / distributions
+build/
+dist/

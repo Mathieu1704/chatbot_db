@@ -1,0 +1,89 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* fade-in */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.animate-fade-in {
+  animation: fadeIn 0.4s ease-out;
+}
+
+/* slide-in gauche/droite */
+@keyframes slideInLeft {
+  from { transform: translateX(-50%); opacity: 0; }
+  to   { transform: translateX(0);     opacity: 1; }
+}
+@keyframes slideInRight {
+  from { transform: translateX(50%);  opacity: 0; }
+  to   { transform: translateX(0);     opacity: 1; }
+}
+.animate-slide-left  { animation: slideInLeft  0.4s ease-out; }
+.animate-slide-right { animation: slideInRight 0.4s ease-out; }
+
+/* hover pulse sur bouton */
+@keyframes pulseHalo {
+  0%,100% { box-shadow: 0 0 0 0    rgba(124,58,237,0.7); }
+  50%     { box-shadow: 0 0 10px 10px rgba(124,58,237,0); }
+}
+.button-pulse:hover {
+  animation: pulseHalo 2s infinite;
+}
+
+/* typing dots */
+@keyframes typingDots {
+  0%, 20%   { opacity: 0.2; }
+  20%, 40%  { opacity: 1; }
+  40%,100%  { opacity: 0.2; }
+}
+.typing-dot {
+  display: inline-block;
+  margin: 0 1px;
+  animation: typingDots 1.4s infinite;
+}
+.typing-dot:nth-child(2) { animation-delay: 0.2s; }
+.typing-dot:nth-child(3) { animation-delay: 0.4s; }
+
+/* gradient animé */
+@keyframes gradientBG {
+  0%   { background-position:  0% 50%; }
+  50%  { background-position:100% 50%; }
+  100% { background-position:  0% 50%; }
+}
+.bg-animated-gradient {
+  background: linear-gradient(-45deg, #7C3AED, #93C5FD, #3B82F6, #10B981);
+  background-size: 400% 400%;
+  animation: gradientBG 10s ease infinite;
+}
+
+/* focus glow textarea */
+.textarea-focus:focus {
+  box-shadow: 0 0 0 3px rgba(124,58,237,0.5);
+}
+
+/* ripple effect */
+@keyframes ripple {
+  to { transform: scale(4); opacity: 0; }
+}
+.ripple {
+  position: relative;
+  overflow: hidden;
+}
+.ripple:after {
+  content: '';
+  position: absolute;
+  border-radius: 50%;
+  width: 100px;
+  height: 100px;
+  background: rgba(255,255,255,0.7);
+  transform: scale(0);
+  animation: ripple 0.6s linear;
+  pointer-events: none;
+}
+
+/* smooth scroll */
+body, .scroll-smooth {
+  scroll-behavior: smooth;
+}

@@ -3,8 +3,6 @@ venv/
 .env/
 icare_gpu/
 
-# Ignorer les fichiers FAISS trop gros
-app/rag/store.faiss/
 
 # Dépendances Node
 node_modules/
@@ -17,3 +15,8 @@ npm-debug.log*
 # Builds / distributions
 build/
 dist/
+
+# Index FAISS et métadonnées
+app/rag/store.faiss/
+*.pkl
+*.meta

@@ -3,6 +3,8 @@ venv/
 .env/
 icare_gpu/
 
+# Ignorer les fichiers FAISS trop gros
+app/rag/store.faiss/
 
 # Dépendances Node
 node_modules/

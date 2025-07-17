@@ -1,9 +1,10 @@
 import { NavLink } from 'react-router-dom'
-import { FaHome, FaComments } from 'react-icons/fa'
+import { FaHome, FaComments, FaSitemap } from 'react-icons/fa'
 
 const links = [
   { name: 'Dashboard', to: '/', icon: <FaHome /> },
-  { name: 'Chat', to: '/chat', icon: <FaComments /> }
+  { name: 'Chat', to: '/chat', icon: <FaComments /> },
+  { name: 'Topology',  to: '/topology', icon: <FaSitemap /> }
 ]
 
 export default function Sidebar() {

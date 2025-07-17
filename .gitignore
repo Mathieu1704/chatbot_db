@@ -2,6 +2,7 @@
 venv/
 .env/
 icare_gpu/
+icare_env/
 
 
 # Dépendances Node

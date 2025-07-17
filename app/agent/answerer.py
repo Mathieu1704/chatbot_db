@@ -130,21 +130,22 @@ async def answer(
         preview_docs = [_normalize(d) for d in docs[:5]]
 
         if user_locale.lower().startswith("en"):
-            header = f"**{total} sensors found**."
-            intro  = "Here is a summary:"
+            if total == 1:
+                header = "1 element found."
+                intro  = "Here is a summary:"
+            else:
+                header = f"{total} elements founded."
+                intro  = "Here is a summary:"
         else:
-            header = f"{total} capteurs on été trouvés.\n"
-            intro  = "Voici un tableau recapitulatif :"
+            if total == 1:
+                header = "1 élément a été trouvé."
+                intro  = "Voici un résumé :"
+            else:
+                header = f"{total} éléments on été trouvés.\n"
+                intro  = "Voici un tableau recapitulatif :"
 
-        table_lines = []
-        if preview_docs:
-            cols = list(preview_docs[0].keys())
-            table_lines.append("| " + " | ".join(cols) + " |")
-            table_lines.append("|" + "|".join(["---"] * len(cols)) + "|")
-            for d in preview_docs:
-                table_lines.append("| " + " | ".join(str(d[c]) for c in cols) + " |")
 
-        return "\n".join([header, intro] + table_lines)
+        return "\n".join([header, intro])
 
     # ------------------------------------------------------------------ #
     # 4. Connectivity Overview #
@@ -193,9 +194,44 @@ async def answer(
         )
         items = [f"- {addr}" for addr in addrs]
         return "\n".join([header] + items)
-
     # ------------------------------------------------------------------ #
-    # 7. Fallback : laisse GPT formater                                  #
+    # 7. Network topology                                                #
+    # ------------------------------------------------------------------ #
+    if "topology" in tool_result:
+        topo = tool_result["topology"] or {}
+
+        if isinstance(topo, dict) and {"nodes", "links"} <= topo.keys():
+            nodes = topo.get("nodes", [])
+            gws   = sum(1 for n in nodes if n.get("type") == "gateway")
+            ext   = sum(1 for n in nodes if n.get("type") == "extender")
+            sens  = sum(1 for n in nodes if n.get("type") == "sensor")
+        else:
+            gws  = len(topo)
+            ext  = sum(len(g.get("extenders", [])) for g in topo)
+            sens = sum(
+                len(g.get("sensors_direct", [])) +
+                sum(len(e.get("sensors", [])) for e in g.get("extenders", []))
+                for g in topo
+            )
+
+        if user_locale.lower().startswith("en"):
+            return "\n".join([
+                "**Network topology**",
+                f"Gateways : {gws}",
+                f"Range-extenders : {ext}",
+                f"Sensors : {sens}"
+            ])
+        else:
+            return "\n".join([
+                "**Topologie réseau**",
+                f"Gateways : {gws}",
+                f"Range-extenders : {ext}",
+                f"Capteurs : {sens}"
+            ])
+
+        
+    # ------------------------------------------------------------------ #
+    # X. Fallback : laisse GPT formater                                  #
     # ------------------------------------------------------------------ #
     system_prompt = _system_prompt(user_locale) + "\nUse the exact company name when referring."
     user_prompt = (

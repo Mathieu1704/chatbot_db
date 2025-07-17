@@ -2,6 +2,18 @@
 @tailwind components;
 @tailwind utilities;
 
+html, body, #root {          
+  height: 100%;
+}
+
+.sigma-container { background:rgb(231, 231, 231) !important; }      
+.canvas-wrapper,             
+#graph-pane                   
+{
+  height: 100%;              
+}
+
+
 /* fade-in */
 @keyframes fadeIn {
   from { opacity: 0; }

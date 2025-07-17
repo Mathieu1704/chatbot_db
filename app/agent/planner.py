@@ -115,7 +115,7 @@ FUNC_SCHEMAS = [
             "properties": {
             "client_id": {
                 "type": "string",
-                "description": "Identifiant du client (ex. « Icare_Brussels »)"
+                "description": "Identifiant du client (ex. « Icare_Brussels », \"Cabot\", etc.)"
             },
             "collection": {
                 "type": "string",
@@ -132,7 +132,7 @@ FUNC_SCHEMAS = [
             },
             "projection": {
                 "type": "object",
-                "description": "Projection MongoDB facultative : clés = champs à inclure/exclure, valeurs = 1 (inclure) ou 0 (exclure). Toujours inclure « address » pour identifier un document (ex. {\"address\":1,\"batt\":1,\"last_com\":1,\"_id\":0})."
+                "description": "Projection MongoDB facultative : clés = champs à inclure/exclure, valeurs = 1 (inclure) ou 0 (exclure). Toujours inclure « address » pour identifier un document (ex. {\"address\":1,\"batt\":1,\"last_com\":1,\"_id\":0}). Toujours faire une projection pour masquer tous les éléments non nécessaire."
             }
             },
             "required": ["client_id", "collection"]
@@ -151,129 +151,91 @@ FUNC_SCHEMAS = [
             },
             "required": ["query"]
         }
+    },
+    {
+        "name": "network_topology",
+        "description": (
+            "Reconstruit la topologie réseau (gateways, range-extenders, sensors) "
+            "pour une entreprise donnée."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "company": {
+                    "type": "string",
+                    "description": "Nom complet de l’entreprise (ex. 'Icare Brussels')"
+                }
+            },
+            "required": ["company"]
+        }
     }
-
 ]
 
 def _system_prompt(locale: str) -> str:
     """
-    I-CARE Planner system-prompt generator.
+    I-CARE Planner – system prompt.
 
-    Responsibilities
-    ----------------
-    • Decide which FUNCTION to call, or reply directly.
-    • Never return more than one function_call.
-    • Distinguish clearly between:
-        – query_db  → recherches **structurées** (find Mongo)   → pas de limite par défaut.
-        – run_query → recherches **sémantiques / vectorielles** → `limit` OBLIGATOIRE ≤ 10 000.
+    Objectifs ―
+      • Choisir UNE fonction à appeler, ou répondre directement.
+      • Ne jamais produire plus d’un `function_call`.
+      • Distinguer clairement :
+          – query_db  : requêtes Mongo “structurées” (find + filtres précis)
+          – run_query : recherche vectorielle / sémantique ($vectorSearch)
+
+    Règles communes ―
+      • Si l’utilisateur demande « quels champs » → describe_schema.
+      • Si la question contient des noms type capteurs, gateway, etc, ou uniquement des filtres explicites
+        (batt, rssi, last_com, node_type…)        → query_db.
+      • Si la question contient des mots-clés flous
+        (anomalie, tendance, similarité, texte libre…) → run_query
+        (toujours avec un `limit` ≤ 10 000, k = 100 par défaut).
+      • « offline / hors-ligne » sans autres filtres → connectivity_overview.
+      • « état batterie » / critical / warning / ok  → battery_overview.
+      • Sinon                                      → rag_search.
+
+    Conseils projection ―
+      • Lorsque query_db inclut des champs spécifiques,
+        ajouter `projection` avec ces champs + `address`
+        et masquer « _id » si non nécessaire.
+
+    Conseils node_type ―
+      • Si la question parle de *gateway / passerelle* → ajouter filter {"node_type": 1}.
+      • Si elle parle de *capteurs / sensors / transmitters* → filter {"node_type": 2}.
+      • Si elle parle de *range extender*                → filter {"node_type": 3}.
+      • Ne mélange pas plusieurs `node_type` dans la même requête.
+
+    Exemples ―
+      • “Show all sensor IDs with batt < 3 200”  
+        → query_db(client_id, "network_nodes",
+                   filter={"batt":{"$lt":3200}, "node_type":2},
+                   projection={"address":1,"batt":1,"_id":0})
+
+      • “List gateways that haven’t communicated for 48 h”  
+        → query_db(client_id, "network_nodes",
+                   filter={"node_type":1,
+                           "last_com":{"$lt":"<ISO-date-48h-ago>"}},
+                   projection={"address":1,"last_com":1,"_id":0})
+
+      • “Find sensors similar to ‘motor vibration anomaly’ ”  
+        → run_query(db_name, "network_nodes",
+                     query="motor vibration anomaly",
+                     limit=200,
+                     projection={"address":1,"score":1,"_id":0})
     """
 
-    # ------------------------------------------------------------------ #
-    # 🇬🇧  English                                                         #
-    # ------------------------------------------------------------------ #
+    # English variant ---------------------------------------------------
     if locale.lower().startswith("en"):
         return (
             "You are I-CARE Planner. Decide which FUNCTION to call or reply directly.\n"
-            "\n"
-            "AVAILABLE FUNCTIONS\n"
-            "1. describe_schema(client_id, collection)               → list fields in a collection.\n"
-            "2. query_db(client_id, collection, filter, projection, limit)\n"
-            "   • Plain Mongo find for **structured filters** (battery, RSSI, last_com…).\n"
-            "   • No default limit: return **all** matching docs unless the user gives a number.\n"
-            "3. connectivity_overview(client_id)                     → connected / disconnected counts.\n"
-            "4. battery_overview(client_id)                          → battery status counters.\n"
-            "5. rag_search(client_id, query)                         → unstructured / fallback search.\n"
-            "6. run_query(db_name, coll, query, filter, limit, projection)\n"
-            "   • Vector ($vectorSearch) when the user asks for semantic similarity or vague keywords.\n"
-            "   • Must include a `limit` (k) 1-10 000. If omitted, set k = 100.\n"
-            "\n"
-            "RULES\n"
-            "• Ask for fields           → describe_schema.\n"
-            "• Pure structured filters  → query_db.\n"
-            "  – If the user mentions specific fields, add `projection` with those fields + `address` (+ \"_id\":0).\n"
-            "  – If the query contains “battery < N” or “batt < N”, build:\n"
-            "        filter = {\"batt\": {\"$lt\": N}}\n"
-            "        projection = {\"address\":1, \"batt\":1, \"last_com\":1, \"_id\":0}\n"
-            "  – Do NOT add `limit` unless the user gives a number.\n"
-            "• Keywords 'disconnected', 'offline' (no extra filters) → connectivity_overview.\n"
-            "• Keywords 'battery status', 'critical', 'warning', 'ok' (no filters) → battery_overview.\n"
-            "• Free-text, anomalies, unknown terms                   → run_query with `limit` (≤10 000).\n"
-            "• If nothing applies                                    → rag_search.\n"
-            "\n"
-            "FEW-SHOT EXAMPLES\n"
-            "User: \"What fields can I query on network_nodes?\"\n"
-            "→ function_call: describe_schema(client_id, collection=\"network_nodes\")\n"
-            "\n"
-            "User: \"Give me all sensor IDs with batt < 3200\"\n"
-            "→ function_call: query_db(\n"
-            "      client_id,\n"
-            "      collection=\"network_nodes\",\n"
-            "      filter={\"batt\": {\"$lt\": 3200}},\n"
-            "      projection={\"address\":1, \"_id\":0}\n"
-            "  )\n"
-            "\n"
-            "User: \"Search for sensors similar to 'motor vibration anomaly'\"\n"
-            "→ function_call: run_query(\n"
-            "      db_name=\"Icare_Brussels\",\n"
-            "      coll=\"network_nodes\",\n"
-            "      query=\"motor vibration anomaly\",\n"
-            "      limit=200,\n"
-            "      projection={\"address\":1, \"score\":1, \"_id\":0}\n"
-            "  )\n"
+            + _system_prompt.__doc__
         )
 
-    # ------------------------------------------------------------------ #
-    # 🇫🇷  Français                                                       #
-    # ------------------------------------------------------------------ #
+    # French variant ----------------------------------------------------
     return (
         "Tu es I-CARE Planner. Décide quelle FONCTION appeler ou réponds directement.\n"
-        "\n"
-        "FONCTIONS DISPONIBLES\n"
-        "1. describe_schema(client_id, collection)                    → liste les champs.\n"
-        "2. query_db(client_id, collection, filter, projection, limit)\n"
-        "   • Requête Mongo **structurée** (batt, RSSI, last_com…).\n"
-        "   • Pas de limite par défaut : renvoie TOUS les documents si l'utilisateur ne donne pas de nombre.\n"
-        "3. connectivity_overview(client_id)                          → capteurs connectés / déconnectés.\n"
-        "4. battery_overview(client_id)                               → répartition états batterie.\n"
-        "5. rag_search(client_id, query)                              → recherche texte libre.\n"
-        "6. run_query(db_name, coll, query, filter, limit, projection)\n"
-        "   • Recherche vectorielle ($vectorSearch) pour similarité sémantique / mots-clés vagues.\n"
-        "   • `limit` OBLIGATOIRE (1-10 000). Si absent, mets 100.\n"
-        "\n"
-        "RÈGLES\n"
-        "• Demande de champs                                         → describe_schema.\n"
-        "• Filtres structurés (batt, rssi, last_com…)                 → query_db.\n"
-        "  – Si l'utilisateur cite des champs précis, ajoute `projection` avec ces champs + `address` (+ \"_id\":0).\n"
-        "  – Si la requête contient « batterie » ou « batt » suivi de « < N » :\n"
-        "        filter = {\"batt\": {\"$lt\": N}}\n"
-        "        projection = {\"address\":1, \"batt\":1, \"last_com\":1, \"_id\":0}\n"
-        "  – N'ajoute pas `limit` sauf si l'utilisateur en parle.\n"
-        "• Mots-clés « déconnectés », « hors-ligne » sans autres filtres → connectivity_overview.\n"
-        "• Mots-clés « état batterie », « critique », « ok » sans filtres → battery_overview.\n"
-        "• Requête libre / anomalie / floue                            → run_query avec `limit` ≤ 10 000.\n"
-        "• Sinon                                                      → rag_search.\n"
-        "\n"
-        "EXEMPLES\n"
-        "Utilisateur : « Quels champs puis-je interroger sur network_nodes ? »\n"
-        "→ function_call: describe_schema(client_id, collection=\"network_nodes\")\n"
-        "\n"
-        "Utilisateur : « Donne-moi toutes les adresses avec batt < 3200 »\n"
-        "→ function_call: query_db(\n"
-        "      client_id,\n"
-        "      collection=\"network_nodes\",\n"
-        "      filter={\"batt\": {\"$lt\": 3200}},\n"
-        "      projection={\"address\":1, \"_id\":0}\n"
-        "  )\n"
-        "\n"
-        "Utilisateur : « Recherche les capteurs similaires à 'anomalie moteur' »\n"
-        "→ function_call: run_query(\n"
-        "      db_name=\"Icare_Brussels\",\n"
-        "      coll=\"network_nodes\",\n"
-        "      query=\"anomalie moteur\",\n"
-        "      limit=200,\n"
-        "      projection={\"address\":1, \"score\":1, \"_id\":0}\n"
-        "  )\n"
+        + _system_prompt.__doc__
     )
+
 
 
 

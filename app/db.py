@@ -1,21 +1,26 @@
-import os, json
-import difflib
+import os
+import json
+from functools import lru_cache
 from dotenv import load_dotenv
 from pymongo import MongoClient, errors
-from functools import lru_cache
 from app.utils.slugify_company import slugify_company
 from typing import Optional, Dict, Any, List
+import difflib
 
-# Charger les variables d'environnement
+
+# Charger .env
 load_dotenv()
-MONGODB_URI = os.getenv("MONGODB_URI")
 
-# Connexion au client MongoDB
+# Puis, juste :
+MONGODB_URI = os.getenv("MONGODB_URI")
 client = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=5_000)
+
 try:
     client.admin.command("ping")
+    print(f"[INFO] MongoDB reachable via {MONGODB_URI}")
 except errors.PyMongoError as exc:
     raise RuntimeError(f"Mongo unreachable: {exc}") from exc
+
 
 
 def get_nodes_collection(company: str):
@@ -76,10 +81,8 @@ def find_company_candidates(input_name: str) -> list[str]:
 
     slug_map: dict[str,str] = {}
     for name in companies:
-        s = slugify_company(name)
-        slug_map[s] = name
-        alt = name.replace("_", " ")
-        slug_map[slugify_company(alt)] = name
+        slug_map[slugify_company(name)] = name
+        slug_map[slugify_company(name.replace("_", " "))] = name
     print(f"[DEBUG] slug_map keys: {list(slug_map.keys())}")
 
     probe = slugify_company(input_name)
@@ -97,8 +100,15 @@ def find_company_candidates(input_name: str) -> list[str]:
         unique = list(dict.fromkeys(prefix_matches))
         print(f"[DEBUG] returning prefix unique: {unique}")
         return unique
+    
+     # 3) Sous-chaîne  ← NOUVEAU
+    substr = [slug_map[s] for s in slug_map if s in probe]
+    if substr:
+        chaine = list(dict.fromkeys(substr))
+        print(f"[DEBUG] returning chaine : {chaine}")
+        return chaine
 
-    # 3) Fuzzy
+    # 4) Fuzzy
     close = difflib.get_close_matches(probe, list(slug_map.keys()),
                                       n=len(slug_map), cutoff=0.6)
     result = list({slug_map[s] for s in close})

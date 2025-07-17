@@ -1,5 +1,5 @@
 import os
-from langchain.vectorstores import FAISS
+from langchain_community.vectorstores import FAISS
 from app.rag.loader import load_store
 from dotenv import load_dotenv
 

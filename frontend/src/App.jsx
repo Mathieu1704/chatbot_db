@@ -2,6 +2,8 @@ import { BrowserRouter as Router, Routes, Route } from 'react-router-dom'
 import Sidebar from './components/Sidebar'
 import Dashboard from './components/Dashboard'
 import Chat from './components/Chat'
+import Topology from "./components/Topology";
+
 
 export default function App() {
   return (
@@ -12,6 +14,7 @@ export default function App() {
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/chat" element={<Chat />} />
+            <Route path="/topology" element={<Topology />} />
           </Routes>
         </main>
       </div>

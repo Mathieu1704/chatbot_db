@@ -1,6 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react'
 import axios from 'axios'
 import DataTable from './DataTable'
+import { useNavigate } from 'react-router-dom'         
+import { useTopologyStore } from '@/store/useTopologyStore'
 
 export default function Chat() {
   /* ---------- État principal ---------- */
@@ -19,6 +21,8 @@ export default function Chat() {
   const [input, setInput]       = useState('')
   const [loading, setLoading]   = useState(false)
   const [typing, setTyping]     = useState(false)
+  const navigate = useNavigate()
+  const setTopology = useTopologyStore(s => s.setTopology)
 
   /* ---------- Refs & state UI ---------- */
   const containerRef           = useRef(null)
@@ -86,6 +90,18 @@ export default function Chat() {
     try {
       const res = await axios.post('/api/chat', { message: text, locale: 'fr' })
       const { answer, documents, columns, type } = res.data
+
+      /* --- Si la réponse contient un graphe de topologie --- */
+      if (res.data.graph) {
+        // slug normalisé de l’entreprise renvoyée par l’orchestrateur
+        const slug = (res.data.company || '').toLowerCase();
+
+        // 1) on stocke le graphe dans Zustand
+        setTopology(slug, res.data.graph);
+
+        // 2) on ouvre /topology?company=<slug>
+        navigate(`/topology?company=${encodeURIComponent(slug)}`);
+      }                    
 
       setMessages(ms => {
         const newMs = [

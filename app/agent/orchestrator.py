@@ -10,6 +10,7 @@ from cachetools import TTLCache, cached
 
 from app.tools import sensor_tools as st
 from app.tools.sensor_tools import battery_overview, battery_list
+from app.tools.topology import get_network_topology, topology_to_d3
 from app.rag.vector_store import query_sensors
 from app.agent import planner, answerer
 from app.db import list_companies, find_company_candidates, execute_db_query, describe_schema
@@ -270,38 +271,98 @@ async def handle_query(
         # query_db (find classique)
         # -----------------------------------------------------------------
         elif func_name == "query_db":
-            args = func_args
+            args      = func_args
+            raw_text  = text                              # requête utilisateur brute
 
-            # 1) Résoudre le nom d’entreprise
-            raw_name   = args["client_id"]
-            client_id  = resolve_company(raw_name) or raw_name   # fallback si inconnu
-            if client_id != raw_name:
-                print(f"[ORCH] client '{raw_name}' → '{client_id}'", flush=True)
+            # ───────────────────────────────────────────────────────────────
+            # 1) Résolution du client
+            # ───────────────────────────────────────────────────────────────
+            probe = find_company_candidates(raw_text)     # cherche un nom dans la question
+            if probe:                                     # ≥ 1 candidat trouvé
+                client_id = probe[0]
+                if client_id != args["client_id"]:
+                    print(f"[ORCH] override client_id '{args['client_id']}' -> '{client_id}'",
+                          flush=True)
+            else:                                         # fallback : tentative de correction
+                client_id = resolve_company(args["client_id"]) or args["client_id"]
 
-            # 2) Exécuter la requête avec le nom corrigé
+            # ───────────────────────────────────────────────────────────────
+            # 2) Correction automatique du node_type selon le wording
+            # ───────────────────────────────────────────────────────────────
+            txt = raw_text.lower()
+            if any(w in txt for w in
+                   ["capteur", "capteurs", "sensor", "sensors",
+                    "transmitter", "transmitters"]):
+                args.setdefault("filter", {})["node_type"] = 2
+            elif any(w in txt for w in
+                     ["gateway", "gateways", "passerelle", "passerelles"]):
+                args.setdefault("filter", {})["node_type"] = 1
+            elif any(w in txt for w in
+                     ["range extender", "extender"]):
+                args.setdefault("filter", {})["node_type"] = 3
+
+            # 2bis) projection par défaut si GPT n'en a pas fourni
+            if not args.get("projection"):
+                args["projection"] = {
+                    "address":   1,
+                    "batt":      1,
+                    "last_com":  1,
+                    "_id":       0
+                }
+
+            # ───────────────────────────────────────────────────────────────
+            # 3) Exécution de la requête Mongo
+            # ───────────────────────────────────────────────────────────────
             raw_docs = execute_db_query(
-                client_id=client_id,                  # ← ICI on passe le bon nom
-                collection=args["collection"],
-                filter=args.get("filter"),
-                projection=args.get("projection"),
-                limit=args.get("limit")
+                client_id  = client_id,                   # nom de base validé
+                collection = args["collection"],
+                filter     = args.get("filter"),
+                projection = args.get("projection"),
+                limit      = args.get("limit")
             )
 
-            # 3) (le reste du bloc ne change pas)
             docs = serialize_docs(raw_docs)
             cols = list(docs[0].keys()) if docs else []
 
-            answer_txt = await answerer.answer(
-                locale, {"documents": docs}, text
-            )
+            answer_txt = await answerer.answer(locale, {"documents": docs}, text)
 
             return {
                 "session_id": session_id,
-                "answer": answer_txt,
-                "documents": docs,
-                "columns": cols,
+                "answer":      answer_txt,
+                "documents":   docs,
+                "columns":     cols,
                 "duration_ms": int((time.time() - start) * 1000)
             }
+        # -----------------------------------------------------------------
+        # get_network_topology
+        # -----------------------------------------------------------------
+        elif func_name == "network_topology":
+            raw = func_args.get("company", "").strip()
+            comp = resolve_company(raw)
+            if not comp:
+                return {
+                    "session_id": session_id,
+                    "answer": f"Je ne reconnais pas l’entreprise « {raw} »."
+                }
+
+            topo_json = get_network_topology(comp)
+            d3_data   = topology_to_d3(topo_json)   # format {nodes, links}
+
+            return {
+                "session_id": session_id,
+                # ↙︎ résumé pour l’utilisateur
+                "answer": await answerer.answer(
+                    locale,
+                    {"topology": topo_json},  # passe un dict, pas une liste
+                    text
+                ),
+                "company": comp,          
+                "topology": topo_json,
+                "graph": d3_data,
+                "duration_ms": int((time.time() - start) * 1000)
+            }
+
+
 
         # -----------------------------------------------------------------
         # Fonction non implémentée

@@ -21,3 +21,4 @@ dist/
 app/rag/store.faiss/
 *.pkl
 *.meta
+app.zip

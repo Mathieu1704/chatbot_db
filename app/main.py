@@ -1,11 +1,15 @@
 import os
 import uuid
 import json
+import time
 
 from fastapi import FastAPI, Request, HTTPException, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Extra
 from starlette.middleware.sessions import SessionMiddleware
+from app.db import get_asset_by_id
+from app.utils.serialize import _deep_clean
+from app.tools.asset_types import ASSET_TYPE_MAP
 
 from app.agent.orchestrator import handle_query
 from app.tools.topology import get_network_topology, topology_to_d3
@@ -46,14 +50,21 @@ async def chat(request: Request, payload: ChatReq):
     session_id = request.session.get("session_id") or str(uuid.uuid4())
     request.session["session_id"] = session_id
 
+    # démarrage du chrono serveur
+    start = time.perf_counter()
+
     # (b) appelle l’orchestrateur
     resp = await handle_query(payload.message, payload.locale, session_id)
 
-    # (c) uniformise au besoin
-    if isinstance(resp, str):
-        return {"answer": resp}
+    # calcul du temps écoulé en ms
+    elapsed_ms = (time.perf_counter() - start) * 1000
+    duration = round(elapsed_ms)
 
-    # resp est déjà un dict complet : on le renvoie tel quel
+    # (c) uniformise si nécessaire et injecte duration
+    if isinstance(resp, str):
+        return {"answer": resp, "duration_ms": duration}
+
+    resp["duration_ms"] = duration
     return resp
 
 # ── 5. Route /topology ────────────────────────────────────────────────
@@ -68,5 +79,34 @@ async def topology(company: str):
         }
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+
+# ── 6. Route /assets ──────────────────────────────────────────────────
+@api.get("/assets/{client_id}/{asset_id}")
+async def asset_detail(client_id: str, asset_id: str):
+    """
+    Retourne le document complet (nettoyé) de la collection assets
+    pour l’ObjectId donné, ou 404 s’il n’existe pas.
+    """
+    asset = get_asset_by_id(client_id, asset_id)
+    if not asset:
+        raise HTTPException(404, f"Asset {asset_id} introuvable dans la DB {client_id}")
+
+    # Nettoyage : ObjectId→str, datetime→ISO, on retire _id interne
+    cleaned = {}
+    for k, v in asset.items():
+        if k == "_id":
+            continue
+        cleaned[k] = _deep_clean(v)
+
+    if "t" in cleaned:
+        try:
+            raw = int(cleaned["t"])
+            label = ASSET_TYPE_MAP.get(raw)
+            if label:
+                cleaned["t"] = f"{raw} ({label})"
+        except Exception:
+            pass
+
+    return cleaned
 
 app.include_router(api)

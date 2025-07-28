@@ -11,12 +11,13 @@ from cachetools import TTLCache, cached
 from app.tools import sensor_tools as st
 from app.tools.sensor_tools import battery_overview, battery_list
 from app.tools.topology import get_network_topology, topology_to_d3
+from app.tools.dynamic_projection import build_dynamic_projection, build_dynamic_projection_multi
 from app.rag.vector_store import query_sensors
 from app.agent import planner, answerer
-from app.db import list_companies, find_company_candidates, execute_db_query, describe_schema
+from app.db import list_companies, find_company_candidates, execute_db_query, describe_schema, execute_cross_db_query, sample_fields, get_asset_by_id
 from app.utils.slugify_company import slugify_company
-from app.utils.serialize import serialize_docs
-from app.search.run_query import run_query
+from app.utils.serialize import serialize_docs, extract_columns
+#from app.search.run_query import run_query
 from app.agent.state import PENDING, CONVERSATIONS
 
 # ---------------------------------------------------------------------
@@ -174,30 +175,29 @@ async def handle_query(
             }
 
 
-
-        # -----------------------------------------------------------------
-        # run_query (vector search + filtres)
-        # -----------------------------------------------------------------
-        elif func_name == "run_query":
-            docs = run_query(
-                db_name=func_args["db_name"],
-                coll=func_args.get("coll", "network_nodes"),
-                query=func_args["query"],
-                filter_json=func_args.get("filter", {}),
-                k=func_args.get("limit"),
-                num_candidates=func_args.get("num_candidates"),
-                projection=func_args.get("projection"),
-                index_name=func_args.get("index_name")
-            )
-            return {
-                "session_id": session_id,
-                "answer": f"{len(docs)} capteurs trouvés (batt < 3500 mV, hors ligne ≥ 4 j)",
-                "documents": docs,                  # ← brut JSON, prêt pour TanStack
-                "columns": list(docs[0].keys()) if docs else [],
-                "duration_ms": int((time.time() - start) * 1000)
-            }
-
-
+        
+        # # -----------------------------------------------------------------
+        # # run_query (vector search + filtres)
+        # # -----------------------------------------------------------------
+        # elif func_name == "run_query":
+        #     docs = run_query(
+        #         db_name=func_args["db_name"],
+        #         coll=func_args.get("coll", "network_nodes"),
+        #         query=func_args["query"],
+        #         filter_json=func_args.get("filter", {}),
+        #         k=func_args.get("limit"),
+        #         num_candidates=func_args.get("num_candidates"),
+        #         projection=func_args.get("projection"),
+        #         index_name=func_args.get("index_name")
+        #     )
+        #     return {
+        #         "session_id": session_id,
+        #         "answer": f"{len(docs)} capteurs trouvés (batt < 3500 mV, hors ligne ≥ 4 j)",
+        #         "documents": docs,                  # ← brut JSON, prêt pour TanStack
+        #         "columns": list(docs[0].keys()) if docs else [],
+        #         "duration_ms": int((time.time() - start) * 1000)
+        #     }
+        
         # -----------------------------------------------------------------
         # rag_search (full-text fallback)
         # -----------------------------------------------------------------
@@ -290,39 +290,53 @@ async def handle_query(
             # 2) Correction automatique du node_type selon le wording
             # ───────────────────────────────────────────────────────────────
             txt = raw_text.lower()
-            if any(w in txt for w in
-                   ["capteur", "capteurs", "sensor", "sensors",
-                    "transmitter", "transmitters"]):
-                args.setdefault("filter", {})["node_type"] = 2
-            elif any(w in txt for w in
-                     ["gateway", "gateways", "passerelle", "passerelles"]):
-                args.setdefault("filter", {})["node_type"] = 1
-            elif any(w in txt for w in
-                     ["range extender", "extender"]):
-                args.setdefault("filter", {})["node_type"] = 3
-
-            # 2bis) projection par défaut si GPT n'en a pas fourni
-            if not args.get("projection"):
-                args["projection"] = {
-                    "address":   1,
-                    "batt":      1,
-                    "last_com":  1,
-                    "_id":       0
-                }
+            if args["collection"] == "network_nodes": 
+                if any(w in txt for w in
+                    ["capteur", "capteurs", "sensor", "sensors",
+                        "transmitter", "transmitters"]):
+                    args.setdefault("filter", {})["node_type"] = 2
+                elif any(w in txt for w in
+                        ["gateway", "gateways", "passerelle", "passerelles"]):
+                    args.setdefault("filter", {})["node_type"] = 1
+                elif any(w in txt for w in
+                        ["range extender", "extender"]):
+                    args.setdefault("filter", {})["node_type"] = 3
 
             # ───────────────────────────────────────────────────────────────
-            # 3) Exécution de la requête Mongo
+            # 2bis) Si on fait de la projection dynamique, on récupère directement
+            #     les documents via build_dynamic_projection (aggregate pipeline).
             # ───────────────────────────────────────────────────────────────
-            raw_docs = execute_db_query(
-                client_id  = client_id,                   # nom de base validé
-                collection = args["collection"],
-                filter     = args.get("filter"),
-                projection = args.get("projection"),
-                limit      = args.get("limit")
-            )
+            if args["collection"] != "network_nodes" and not args.get("projection"):
+                print(f"[ORCH] → dynamic aggregation pour {client_id}.{args['collection']}")
+                # build_dynamic_projection renvoie directement la liste de docs
+                raw_docs = await build_dynamic_projection(
+                    client_id=client_id,
+                    collection=args["collection"],
+                    user_query=raw_text,
+                    match_filter=args.get("filter") or {}
+                )
+            else:
+                # fallback sur un find classique si pas de dynamic
+                # assure la projection / filter existants
+                proj = args.get("projection") or {}
+                for k in (args.get("filter") or {}):
+                    if not k.startswith("$") and k not in proj:
+                        proj[k] = 1
+                raw_docs = execute_db_query(
+                    client_id  = client_id,
+                    collection = args["collection"],
+                    filter     = args.get("filter"),
+                    projection = proj,
+                    limit      = args.get("limit")
+                )
+
+            for d in raw_docs:
+                d["_company"] = client_id
 
             docs = serialize_docs(raw_docs)
-            cols = list(docs[0].keys()) if docs else []
+            cols = extract_columns(docs)
+            if "_company" not in cols:
+                cols.insert(0, "_company")  # assure que _company est en 1ère position
 
             answer_txt = await answerer.answer(locale, {"documents": docs}, text)
 
@@ -360,6 +374,116 @@ async def handle_query(
                 "topology": topo_json,
                 "graph": d3_data,
                 "duration_ms": int((time.time() - start) * 1000)
+            }
+
+        # -----------------------------------------------------------------
+        # execute_cross_db_query
+        # -----------------------------------------------------------------
+        elif func_name == "query_multi_db":
+            args     = func_args
+            raw_text = text.lower()
+
+            # ── Injection automatique de node_type selon le wording comme dans query_db
+            if args["collection"] == "network_nodes":
+                if any(w in raw_text for w in ["capteur", "capteurs", "sensor", "sensors"]):
+                    args.setdefault("filter", {})["node_type"] = 2
+                elif any(w in raw_text for w in ["gateway", "gateways", "passerelle", "passerelles"]):
+                    args.setdefault("filter", {})["node_type"] = 1
+                elif any(w in raw_text for w in ["range extender", "extender"]):
+                    args.setdefault("filter", {})["node_type"] = 3
+
+            raw_ids = args.get("client_ids")
+            print(f"[DEBUG][orchestrator] Raw client_ids from LLM: {raw_ids}", flush=True)
+
+            # 1) Déterminer la liste des clients à interroger
+            if not raw_ids:
+                clients = list_companies()
+                print(f"[DEBUG][orchestrator] No client_ids provided, defaulting to all companies: {clients}", flush=True)
+            else:
+                clients = [resolve_company(raw) or raw for raw in raw_ids]
+                print(f"[DEBUG][orchestrator] Resolved client_ids to actual DB names: {clients}", flush=True)
+
+            # Trier alphabétiquement
+            clients = sorted(clients, key=str.lower)
+            print(f"[DEBUG][orchestrator] Sorted client list: {clients}", flush=True)
+
+            # 2) Si pas de projection (hors network_nodes), faire dynamic aggregation multi-DB
+            if args["collection"] != "network_nodes" and not args.get("projection"):
+                print(f"[ORCH-MULTI] → dynamic aggregation multi-DB pour "
+                      f"{args['collection']} sur {len(clients)} bases")
+                raw_docs = await build_dynamic_projection_multi(
+                    client_ids=clients,
+                    collection=args["collection"],
+                    user_query=raw_text,
+                    match_filter=args.get("filter") or {}
+                )
+
+            else:
+                # fallback : ensure projection includes filter keys
+                proj = args.get("projection") or {}
+                for k in (args.get("filter") or {}):
+                    if not k.startswith("$") and k not in proj:
+                        proj[k] = 1
+                print(f"[DEBUG][orchestrator] Final projection used: {proj}", flush=True)
+                raw_docs = execute_cross_db_query(
+                    client_ids = clients,
+                    collection = args["collection"],
+                    filter     = args.get("filter"),
+                    projection = proj,
+                    limit      = args.get("limit")
+                )
+
+            # 3) Réordonner les résultats par client
+            raw_docs.sort(key=lambda d: d["_company"].lower())
+            print(f"[DEBUG][orchestrator] Retrieved {len(raw_docs)} documents in total", flush=True)
+
+            # 4) Sérialisation et formatage de la réponse
+            docs    = serialize_docs(raw_docs)
+            columns = extract_columns(docs)
+            print(f"[DEBUG][orchestrator] Columns to display: {columns}", flush=True)
+
+            answer_txt = await answerer.answer(
+                locale,
+                {"documents": docs},
+                text
+            )
+            print(f"[DEBUG][orchestrator] Generated answer text", flush=True)
+
+            return {
+                "session_id": session_id,
+                "answer":      answer_txt,
+                "documents":   docs,
+                "columns":     columns,
+                "duration_ms": int((time.time() - start) * 1000)
+            }
+
+        # -----------------------------------------------------------------
+        # get_asset_by_id
+        # -----------------------------------------------------------------
+        elif func_name == "get_asset_by_id":
+            client_id = func_args["client_id"]
+            asset_id  = func_args["asset_id"]
+            asset_doc = get_asset_by_id(client_id, asset_id)
+            if not asset_doc:
+                return {
+                    "session_id": session_id,
+                    "answer": f"❌ Asset {asset_id} introuvable dans la base {client_id}."
+                }
+
+            # Sérialisation plate + colonnes
+            flat = serialize_docs([asset_doc])[0]
+            cols = extract_columns([flat])
+            # Réponse utilisateur
+            answer_txt = await answerer.answer(
+                locale,
+                {"documents": [flat]},
+                f"Détail de l’asset {asset_id}"
+            )
+            return {
+                "session_id": session_id,
+                "answer":    answer_txt,
+                "documents": [flat],
+                "columns":   cols
             }
 
 

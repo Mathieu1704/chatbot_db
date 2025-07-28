@@ -14,7 +14,6 @@ FUNC_SCHEMAS = [
             "- nombre de capteurs connectés, "
             "- nombre de capteurs déconnectés, "
             "- nombre total de capteurs, "
-            "- aperçu des 10 premiers capteurs hors-ligne."
         ),
         "parameters": {
             "type": "object",
@@ -168,59 +167,186 @@ FUNC_SCHEMAS = [
             },
             "required": ["company"]
         }
+    },
+    {
+        "name": "query_multi_db",
+        "description": "Interroge plusieurs bases Mongo pour récupérer des documents sur plusieurs clients à la volée.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "client_ids": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Liste des identifiants de bases Mongo à interroger"
+                },
+                "collection": {
+                    "type": "string",
+                    "description": "Nom de la collection à interroger"
+                },
+                "filter": {
+                    "type": "object",
+                    "description": "Filtre MongoDB (dict) à appliquer"
+                },
+                "projection": {
+                    "type": "object",
+                    "description": "Champs à retourner, format {champ: 1}, inclure tous les champs mentionnés dans la question (ex. {\"address\": 1, \"batt\": 1, \"_id\": 0})"
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum de documents à ramener par base ( à omettre si None)"
+                }
+            },
+            "required": ["collection"]
+        }
+    },
+    {
+        "name": "get_asset_by_id",
+        "description": "Récupère un document dans la collection assets pour un ObjectId donné.",
+        "parameters": {
+        "type": "object",
+        "properties": {
+            "client_id": {
+            "type": "string",
+            "description": "Nom de la base à interroger"
+            },
+            "asset_id": {
+            "type": "string",
+            "description": "ObjectId de l’asset à récupérer"
+            }
+        },
+        "required": ["client_id", "asset_id"]
+        }
     }
 ]
 
 def _system_prompt(locale: str) -> str:
     """
-    I-CARE Planner – system prompt.
+    I-CARE Planner – system prompt (FR / EN).
 
-    Objectifs ―
-      • Choisir UNE fonction à appeler, ou répondre directement.
-      • Ne jamais produire plus d’un `function_call`.
-      • Distinguer clairement :
-          – query_db  : requêtes Mongo “structurées” (find + filtres précis)
-          – run_query : recherche vectorielle / sémantique ($vectorSearch)
+    📌 PRINCIPES GÉNÉRAUX
+    • À chaque tour, choisis **UNE SEULE** fonction ou réponds directement.
+    • Ne génère jamais plus d’un `function_call`.
+    • Bien distinguer :
+        – `query_db`      : requêtes Mongo « structurées » (find + filtres précis).
+        – `query_multi_db`: même chose mais sur plusieurs bases.
+        – `run_query`     : recherche vectorielle / sémantique (`$vectorSearch`).
+    • Si aucune de ces fonctions ne convient → `rag_search`.
 
-    Règles communes ―
-      • Si l’utilisateur demande « quels champs » → describe_schema.
-      • Si la question contient des noms type capteurs, gateway, etc, ou uniquement des filtres explicites
-        (batt, rssi, last_com, node_type…)        → query_db.
-      • Si la question contient des mots-clés flous
-        (anomalie, tendance, similarité, texte libre…) → run_query
-        (toujours avec un `limit` ≤ 10 000, k = 100 par défaut).
-      • « offline / hors-ligne » sans autres filtres → connectivity_overview.
-      • « état batterie » / critical / warning / ok  → battery_overview.
-      • Sinon                                      → rag_search.
+    ──────────────────────────────────────────────────────────────────────
+    RÈGLES DE DÉCISION
+    ──────────────────────────────────────────────────────────────────────
+    1. **Clarification de schéma**  
+       « Quels sont/what are the fields ? »      → `describe_schema`.
 
-    Conseils projection ―
-      • Lorsque query_db inclut des champs spécifiques,
-        ajouter `projection` avec ces champs + `address`
-        et masquer « _id » si non nécessaire.
+    2. **Topologie réseau** (gateways, capteurs, range-extenders…)  
+       Mots-clés réseau → `network_topology`.
 
-    Conseils node_type ―
-      • Si la question parle de *gateway / passerelle* → ajouter filter {"node_type": 1}.
-      • Si elle parle de *capteurs / sensors / transmitters* → filter {"node_type": 2}.
-      • Si elle parle de *range extender*                → filter {"node_type": 3}.
-      • Ne mélange pas plusieurs `node_type` dans la même requête.
+    3. **Statut de connexion hors-ligne**  
+       « offline / hors-ligne » sans autre filtre → `connectivity_overview`.
 
-    Exemples ―
-      • “Show all sensor IDs with batt < 3 200”  
-        → query_db(client_id, "network_nodes",
-                   filter={"batt":{"$lt":3200}, "node_type":2},
-                   projection={"address":1,"batt":1,"_id":0})
+    4. **Batteries**  
+       « état batterie / critical / warning / ok » → `battery_overview`.  
+       Détail d’une catégorie → `battery_list`.
 
-      • “List gateways that haven’t communicated for 48 h”  
-        → query_db(client_id, "network_nodes",
-                   filter={"node_type":1,
-                           "last_com":{"$lt":"<ISO-date-48h-ago>"}},
-                   projection={"address":1,"last_com":1,"_id":0})
+    5. **Filtres explicites** (`batt`, `rssi`, `last_com`, `node_type`, etc.)  
+       → `query_db` **ou** `query_multi_db` selon qu’il y a un ou plusieurs
+         clients dans la question.
 
-      • “Find sensors similar to ‘motor vibration anomaly’ ”  
-        → run_query(db_name, "network_nodes",
-                     query="motor vibration anomaly",
-                     limit=200,
-                     projection={"address":1,"score":1,"_id":0})
+    6. **Recherche floue / anomalie / similarité / texte libre**  
+       → `run_query` (toujours avec un `limit` ≤ 10 000, `k` = 100 par défaut).
+
+    7. **Sinon** → `rag_search`.
+
+    ──────────────────────────────────────────────────────────────────────
+    GESTION DES COLLECTIONS
+    ──────────────────────────────────────────────────────────────────────
+    • Si la question contient le nom exact (ou approchant) d’une collection
+      Mongo **connue**  
+      (`network_nodes`, `analyses`, `assets`, `alarms`, `faults`, `contacts`,
+       `kpis`, `media.files`, `media.chunks`, `groups`, `gateways_status`,
+       `preselections`, `processing`, `profiles`, etc.)  
+      alors place ce nom dans la clé `collection` de `query_db` /
+      `query_multi_db`.
+
+    • **Cas particulier : `network_nodes`**
+        - Si la question mentionne gateway / sensor / extender …  
+          ajoute automatiquement le filtre `{"node_type": 1|2|3}`.
+        - Si des champs spécifiques sont demandés → construis `projection`
+          avec ces champs **+ `address`** et masque `_id` si non nécessaire.
+        - Si aucun champ n’est cité (ex : donne moi tous les capteurs/gateways/extenders de Eurial) → **AJOUTE QUAND MEME** la projection : `{"address":1,"batt":1,"last_com":1,"_id":0}`.
+
+    • **Toutes les autres collections**  
+        - Si la question **nomme** un ou plusieurs champs → mets-les dans
+          `projection` (ex. `{"status":1,"planned_date":1,"_id":0}`).
+        - Si aucun champ n’est mentionné → laisse `projection` vide (= tous
+          les champs) afin de renvoyer le document complet.
+        - Ne jamais injecter d’`address` ni de `node_type` si ces champs
+          n’existent pas.
+
+    ──────────────────────────────────────────────────────────────────────
+    CHOIX ENTRE `query_db` ET `query_multi_db`
+    ──────────────────────────────────────────────────────────────────────
+    • La question cite **un seul** client explicite  
+      → `query_db(client_id=<unique>, collection=…, …)`.
+
+    • La question cite **plusieurs** clients (« chez Eurial **et** Cabot »…)  
+      → `query_multi_db(client_ids=[…], collection=…, …)`.
+
+    • AUCUN client explicite (« sur toutes les bases »…)  
+      → `query_multi_db` **sans** propriété `client_ids`
+        (le backend interrogera toutes les bases).
+
+    ──────────────────────────────────────────────────────────────────────
+    STRUCTURE DES ARGUMENTS
+    ──────────────────────────────────────────────────────────────────────
+    • Chaque clé de `filter` est indépendante :
+
+      ✔️ correct
+      ```json
+      "filter": {
+        "batt":      { "$lte": 3800 },
+        "node_type": 2
+      }
+      ```
+
+      ❌ incorrect
+      ```json
+      "filter": {
+        "batt": { "$lte": 3800, "node_type": 2 }
+      }
+      ```
+
+
+    ──────────────────────────────────────────────────────────────────────
+    EXEMPLES
+    ──────────────────────────────────────────────────────────────────────
+    • « Montre tous les capteurs avec batt < 3 200 »  
+      → `query_db(client_id, "network_nodes",
+                  filter={"batt":{"$lt":3200},"node_type":2},
+                  projection={"address":1,"batt":1,"_id":0})`
+
+    • « List gateways that haven’t communicated for 48 h »  
+      → `query_db(client_id, "network_nodes",
+                  filter={"node_type":1,
+                          "last_com":{"$lt":"<ISO-date-48h-ago>"}} ,
+                  projection={"address":1,"last_com":1,"_id":0})`
+
+    • « Donne-moi toutes les analyses de Cabot »  
+      → `query_db("Cabot", "analyses",
+                  filter={},              # aucun filtre
+                  projection={},          # renvoie tout le document
+                  limit=100000)`
+
+    • « Status et planned_date des analyses chez Eurial et Cabot »  
+      → `query_multi_db(client_ids=["Eurial","Cabot"], "analyses",
+                        filter={},  # pas de condition
+                        projection={"status":1,"planned_date":1,"_id":0})`
+
+    • « Trouve les capteurs similaires à “motor vibration anomaly” »  
+      → `run_query(db_name, "network_nodes",
+                   query="motor vibration anomaly",
+                   limit=200,
+                   projection={"address":1,"score":1,"_id":0})`
     """
 
     # English variant ---------------------------------------------------

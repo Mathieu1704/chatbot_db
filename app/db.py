@@ -1,11 +1,17 @@
 import os
 import json
+from bson import ObjectId
 from functools import lru_cache
+from itertools import chain
+import hashlib
 from dotenv import load_dotenv
 from pymongo import MongoClient, errors
 from app.utils.slugify_company import slugify_company
 from typing import Optional, Dict, Any, List
 import difflib
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+
 
 
 # Charger .env
@@ -17,7 +23,7 @@ client = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=5_000)
 
 try:
     client.admin.command("ping")
-    print(f"[INFO] MongoDB reachable via {MONGODB_URI}")
+    print(f"[INFO] MongoDB reachable")
 except errors.PyMongoError as exc:
     raise RuntimeError(f"Mongo unreachable: {exc}") from exc
 
@@ -139,6 +145,43 @@ def execute_db_query(
         cursor = cursor.limit(limit)
     return list(cursor)
 
+def execute_cross_db_query(
+    client_ids: list[str],
+    collection: str,
+    filter: Dict[str, Any] | None = None,
+    projection: Dict[str, int] | None = None,
+    limit: Optional[int] = None,
+    max_workers: int = 10,
+) -> List[Dict[str, Any]]:
+    """
+    Interroge plusieurs bases en parallèle et renvoie tous les documents,
+    en ajoutant un champ '_company' à chaque doc pour indiquer sa source.
+    """
+    results: list[Dict[str, Any]] = []
+
+    def worker(db_name: str) -> list[Dict[str, Any]]:
+        # ne requête que si la collection existe dans la base
+        if collection not in client[db_name].list_collection_names():
+            return []
+        docs = execute_db_query(
+            client_id=db_name,
+            collection=collection,
+            filter=filter,
+            projection=projection,
+            limit=limit
+        )
+        for d in docs:
+            d["_company"] = db_name
+        return docs
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(worker, db): db for db in client_ids}
+        for fut in as_completed(futures):
+            results.extend(fut.result())
+
+    return results
+
+
 def describe_schema(
     client_id: str,
     collection: str,
@@ -151,3 +194,32 @@ def describe_schema(
     # Liste des champs par récupération d’un sample
     sample = db[collection].find_one({}) or {}
     return list(sample.keys())
+
+def _flatten(doc: dict, parent: str = "", sep: str = ".") -> dict:
+    """Transforme un dict imbriqué en clés 'a.b.c'."""
+    items = {}
+    for k, v in doc.items():
+        key = f"{parent}{sep}{k}" if parent else k
+        if isinstance(v, dict):
+            items.update(_flatten(v, key, sep))
+        else:
+            items[key] = v
+    return items
+
+def sample_fields(client_id: str, collection: str, size: int = 50) -> list[str]:
+    """Union des clés d’un échantillon $sample."""
+    pipe = [{"$sample": {"size": size}}]
+    fields: set[str] = set()
+    for doc in client[client_id][collection].aggregate(pipe):
+        fields.update(_flatten(doc).keys())
+    return sorted(fields)          # tri pour un fingerprint stable
+
+def get_asset_by_id(client_id: str, asset_id: str) -> dict | None:
+    """
+    Retourne le document complet de la collection 'assets'
+    pour l’ObjectId donné (ou None si introuvable).
+    """
+    try:
+        return client[client_id]["assets"].find_one({"_id": ObjectId(asset_id)})
+    except Exception:
+        return None

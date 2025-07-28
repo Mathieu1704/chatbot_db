@@ -3,6 +3,8 @@ import os
 from bson import ObjectId
 from openai import AsyncOpenAI
 from datetime import datetime
+from collections import defaultdict
+
 
 # Client OpenAI asynchrone
 llm = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -105,9 +107,9 @@ async def answer(
         label = "Available fields: " if user_locale.lower().startswith("en") else "Champs disponibles : "
         return label + ", ".join(tool_result["fields"])
 
-    # ------------------------------------------------------------------ #
+        # ------------------------------------------------------------------ #
     # 3. Résultats de requête (documents)                                #
-    #    -> Ne pas renvoyer le JSON complet ; juste un résumé humain.    #
+    #    -> Ne pas renvoyer le JSON complet ; résumé mono-DB ou grouping  #
     # ------------------------------------------------------------------ #
     if "documents" in tool_result:
         docs = tool_result["documents"] or []
@@ -129,23 +131,53 @@ async def answer(
 
         preview_docs = [_normalize(d) for d in docs[:5]]
 
-        if user_locale.lower().startswith("en"):
-            if total == 1:
-                header = "1 element found."
-                intro  = "Here is a summary:"
-            else:
-                header = f"{total} elements founded."
-                intro  = "Here is a summary:"
+        # Détection cross-DB : présence du champ "_company" ?
+        is_cross = any("_company" in d for d in docs)
+        if is_cross:
+            # Groupement par base
+            grouped = defaultdict(list)
+            for d in docs:
+                comp = d.get("_company", "inconnue")
+                clean = {k: v for k, v in d.items() if k != "_company"}
+                grouped[comp].append(clean)
+
+            lines = []
+            is_en = user_locale.lower().startswith("en")
+
+            for comp, items in grouped.items():
+                count = len(items)
+                if is_en:
+                    # gestion du pluriel en anglais
+                    label = "result" if count == 1 else "results"
+                else:
+                    # pluriel en français
+                    label = "résultat" if count == 1 else "résultats"
+
+                # liste à puce
+                lines.append(f" Pour {comp} : {count} {label} \n\n")
+
+            # join avec saut de ligne entre chaque puce
+            return "\n".join(lines)
+
         else:
-            if total == 1:
-                header = "1 élément a été trouvé."
-                intro  = "Voici un résumé :"
+            # Mono-DB : comportement existant inchangé
+            if user_locale.lower().startswith("en"):
+                if total == 1:
+                    header = "1 element found."
+                    intro  = "Here is a summary:"
+                else:
+                    header = f"{total} elements founded."
+                    intro  = "Here is a summary:"
             else:
-                header = f"{total} éléments on été trouvés.\n"
-                intro  = "Voici un tableau recapitulatif :"
+                if total == 1:
+                    header = "1 élément a été trouvé."
+                    intro  = "Voici un résumé :"
+                else:
+                    header = f"{total} éléments on été trouvés.\n"
+                    intro  = "Voici un tableau recapitulatif :"
 
+            return "\n".join([header, intro])
 
-        return "\n".join([header, intro])
 
     # ------------------------------------------------------------------ #
     # 4. Connectivity Overview #

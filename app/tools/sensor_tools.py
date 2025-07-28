@@ -42,7 +42,7 @@ def connectivity_overview(company: str) -> Dict[str, Any]:
     disconnected  = nodes.count_documents({**filt, "last_com": {"$lt":  seuil}})
     total         = connected + disconnected
 
-    # Projection : on ajoute last_com
+    # Projection
     proj = {
         "_id": 0,
         "address": 1,

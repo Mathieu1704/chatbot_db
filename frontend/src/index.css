@@ -4,6 +4,7 @@
 
 html, body, #root {          
   height: 100%;
+  overflow: hidden;
 }
 
 .sigma-container { background:rgb(231, 231, 231) !important; }      
@@ -11,6 +12,16 @@ html, body, #root {
 #graph-pane                   
 {
   height: 100%;              
+}
+
+/* global.css ou tailwind.config */
+tr {
+  height: 34px;
+}
+td {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 

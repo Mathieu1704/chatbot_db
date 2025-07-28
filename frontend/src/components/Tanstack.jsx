@@ -57,22 +57,6 @@ export default function DataTable({ columns, data, dataKey, onAssetClick }) {
   const [columnFilters, setColumnFilters] = useState([])
   const [openFilters, setOpenFilters] = useState({})
 
-  const toggleColumnFilter = (columnId) => {
-    setOpenFilters(prev => ({
-      ...prev,
-      [columnId]: !prev[columnId],
-    }))
-  }
-  useEffect(() => {
-    const handleClickOutside = (e) => {
-      if (!e.target.closest('[data-filter-popup]')) {
-        setOpenFilters({})
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [])
-
 
 
   // ----------------------------------------------
@@ -156,20 +140,12 @@ export default function DataTable({ columns, data, dataKey, onAssetClick }) {
     [columns, onAssetClick]
   )
 
-  const defaultColumn = useMemo(
-    () => ({
-      filterFn: 'includesString',
-    }),
-    []
-  )
-
   // ----------------------------------------------
   //  React‑Table setup
   // ----------------------------------------------
   const table = useReactTable({
     data: rows,
     columns: columnDefs,
-    defaultColumn,
     state: { sorting, grouping, expanded, globalFilter, columnFilters },
     onColumnFiltersChange: setColumnFilters,
     onGlobalFilterChange: setGlobalFilter,
@@ -181,28 +157,7 @@ export default function DataTable({ columns, data, dataKey, onAssetClick }) {
     getSortedRowModel: getSortedRowModel(),
     getGroupedRowModel: getGroupedRowModel(),
     getExpandedRowModel: getExpandedRowModel(),
-    autoResetExpanded: false,
   })
-  
-  // === AJOUT : auto-dépliage des groupes APRÈS filtrage ===
-useEffect(() => {
-  const newExpanded = {}
-  const build = (rows) => {
-    rows.forEach(row => {
-      if (row.getCanExpand()) {
-        newExpanded[row.id] = true
-        build(row.subRows)
-      }
-    })
-  }
-  build(table.getGroupedRowModel().rows)
-  setExpanded(newExpanded)
-}, [
-  columnFilters,   // ← on réagit à chaque modification des filtres par colonne
-  globalFilter,    // ← si vous voulez aussi tenir compte du filtre global
-])
-
-
 
   // ----------------------------------------------
   //  Virtualisation (TanStack Virtual)
@@ -257,7 +212,6 @@ useEffect(() => {
                 <tr>
                   {headerGroup.headers.map(header => {
                     const isSorted = header.column.getIsSorted()
-                    const isFiltered = !!header.column.getFilterValue()
                     return (
                       <th
                         key={header.id}
@@ -277,25 +231,12 @@ useEffect(() => {
                             {header.column.getCanFilter() && (
                               <button
                                 onClick={e => {
-                                  e.stopPropagation()
-
-                                  if (isFiltered) {
-                                    // ① un filtre existe déjà → on l’efface immédiatement
-                                    header.column.setFilterValue(undefined)
-                                    // on referme aussi la pop-up si elle est ouverte
-                                    setOpenFilters(prev => ({ ...prev, [header.column.id]: false }))
-                                  } else {
-                                    // ② aucun filtre actif → on ouvre le pop-up comme avant
-                                    toggleColumnFilter(header.column.id)
-                                  }
+                                  e.stopPropagation()   // empêche le tri au clic sur l’icône
+                                  toggleColumnFilter(header.column.id)
                                 }}
                                 className="p-1 hover:bg-gray-200 rounded"
                               >
-                                <FunnelIcon
-                                  className={`w-4 h-4 transition-colors ${
-                                    isFiltered ? 'text-indigo-600' : 'text-gray-500'
-                                  }`}
-                                />
+                                <FunnelIcon className="w-4 h-4 text-gray-500" />
                               </button>
                             )}
                           </span>
@@ -304,20 +245,15 @@ useEffect(() => {
                         {/* 3) Pop-up de filtre positionné absolu */}
                         {openFilters[header.column.id] && (
                           <div
-                            data-filter-popup
-                            className="absolute mt-1 rounded-lg border border-gray-200 shadow-xl bg-white/90 backdrop-blur-sm p-3 z-10"
-                            style={{ minWidth: 220 }}
+                            className="absolute mt-1 bg-white border shadow-lg p-2 z-10"
+                            style={{ minWidth: 200 }}
                           >
-
                             <input
                               type="text"
                               value={header.column.getFilterValue() ?? ''}
                               onChange={e => header.column.setFilterValue(e.target.value)}
-                              onKeyDown={e => {
-                                if (e.key === 'Enter') toggleColumnFilter(header.column.id)   // ↵ ferme la pop-up
-                              }}
                               placeholder="Filtrer…"
-                              className="w-full text-sm font-normal border border-gray-300 rounded-md px-3 py-1.5 focus:ring-2 focus:ring-indigo-500 focus:outline-none placeholder-gray-400"
+                              className="w-full text-sm border rounded px-2 py-1 mb-2 focus:outline-none"
                             />
                             <button
                               onClick={() => {

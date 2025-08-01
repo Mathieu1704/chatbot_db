@@ -5,6 +5,7 @@ icare_gpu/
 icare_env/
 
 
+
 # Dépendances Node
 node_modules/
 
@@ -30,3 +31,4 @@ others/
 test_ml.py
 extract.py
 app/frontend/node_modules/package-lock.json
+backend/uv.lock

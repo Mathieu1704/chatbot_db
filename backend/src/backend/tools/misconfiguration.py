@@ -2,9 +2,9 @@
 from datetime import datetime, timedelta
 from typing import Any
 
-from app.db import client
-from app.utils.serialize import flatten_doc
-from app.utils.error_meta import load_err_meta
+from backend.db import client
+from backend.utils.serialize import flatten_doc
+from backend.utils.error_meta import load_err_meta
 
 # ── Métadonnées erreurs ──────────────────────────────────────
 ERR_META     = load_err_meta()                         # clé décimale → dict

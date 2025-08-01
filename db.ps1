@@ -11,6 +11,7 @@ $remotePort = 27017
 $localPort  = 27018
 
 $scriptDir   = $PSScriptRoot
+$backendDir = Join-Path $scriptDir "backend"
 $frontendDir = Join-Path $scriptDir "frontend"
 
 # —————————————————————————————
@@ -33,7 +34,7 @@ Start-Process wt.exe -ArgumentList @(
     "cmd", "/k", "ssh -i `"$sshKey`" -p 22 -L ${localPort}:${remoteHost}:${remotePort} ${sshUser}@${sshHost} -N",
     ";",                       # sépare les onglets
     "new-tab", 
-      "cmd", "/k", "cd /d `"$scriptDir`" && uvicorn app.main:app --reload --use-colors --env-file .env --host 127.0.0.1 --port 8000",
+      "cmd", "/k", "cd /d `"$backendDir`" && uv run uvicorn backend.main:app --reload --use-colors --env-file .env --host 127.0.0.1 --port 8000",
     ";",
     "new-tab",
       "cmd", "/k", "cd /d `"$frontendDir`" && npm install && npm run dev"

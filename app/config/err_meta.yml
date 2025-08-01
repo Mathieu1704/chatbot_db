@@ -1,0 +1,209 @@
+# Code | Nom | Catégorie | Sévérité | Cause | Hint (facultatif)
+
+0:
+  name: NO_ERROR
+  category: none
+  severity: OK
+  cause: none
+
+# — CRITICAL (alerte immédiate dès 1 occurrence) —
+1:
+  name: CRC_ERROR
+  category: protocol
+  severity: Critical
+  cause: communication
+  hint: Vérifier l’intégrité radio ou câblage
+
+2:
+  name: DF_TYPE_UNKNOWN
+  category: protocol
+  severity: Critical
+  cause: communication
+
+3:
+  name: COMMAND_NOT_VALID
+  category: config
+  severity: Critical
+  cause: task_misconfig
+
+4:
+  name: PARAM_NOT_VALID_MODE
+  category: config
+  severity: Critical
+  cause: task_misconfig
+
+5:
+  name: PARAM_NOT_VALID_NUMBER_SAMPLES
+  category: config
+  severity: Critical
+  cause: task_misconfig
+
+6:
+  name: PARAM_NOT_VALID_SAMPLING_FREQ
+  category: config
+  severity: Critical
+  cause: task_misconfig
+
+7:
+  name: PARAM_NOT_VALID_GAIN
+  category: config
+  severity: Critical
+  cause: task_misconfig
+
+8:
+  name: PARAM_NOT_VALID_SKISLOPE
+  category: config
+  severity: Critical
+  cause: task_misconfig
+
+9:
+  name: PARAM_NOT_VALID_TIMEOUT
+  category: config
+  severity: Critical
+  cause: task_misconfig
+
+16:
+  name: PARAM_NOT_VALID_SLEEPTIME
+  category: config
+  severity: Critical
+  cause: task_misconfig
+
+17:
+  name: PARAM_NOT_VALID_NUMBER_AVERAGES
+  category: config
+  severity: Critical
+  cause: task_misconfig
+
+18:
+  name: PARAM_NOT_VALID_FACTOR
+  category: config
+  severity: Critical
+  cause: task_misconfig
+
+19:
+  name: PARAM_NOT_VALID_POSIX_TIME
+  category: config
+  severity: Critical
+  cause: task_misconfig
+
+20:
+  name: PARAM_NOT_VALID_DIAGNOSTIC_MODE
+  category: config
+  severity: Critical
+  cause: task_misconfig
+
+21:
+  name: PARAM_NOT_VALID_CONFLICT_SAMPLING
+  category: config
+  severity: Critical
+  cause: task_misconfig
+
+23:
+  name: CHANNEL_BITMASK_ERROR
+  category: sensor
+  severity: Critical
+  cause: sensor_failure
+
+25:
+  name: PARAM_NOT_VALID_CHANNEL
+  category: config
+  severity: Critical
+  cause: task_misconfig
+
+26:
+  name: UNDOCUMENTED_ERROR_26         
+  category: unknown
+  severity: Critical
+  cause: suspect                      
+  hint: Code non documenté — vérifier firmware ou mapping errcodes
+
+# — WARNING (tolérance : 2 erreurs consécutives ou fréquence) —
+22:
+  name: DF_NUMBER_NOT_EXIST
+  category: protocol
+  severity: Warning
+  cause: communication
+  hint: NOT USED IN G22-3 FIRMWARE!!! SENSOR Data Frame Number does not exist
+
+24:
+  name: I2C_READ_ERROR
+  category: sensor
+  severity: Warning
+  cause: sensor_failure
+  hint: NOT USED IN G22-3 FIRMWARE!!! Error in reading Temperature from I2C sensor
+
+32:
+  name: OTA_TOO_BIG
+  category: firmware
+  severity: Warning
+  cause: sensor_failure
+
+33:
+  name: DOWNLOAD_FAILED
+  category: firmware
+  severity: Warning
+  cause: sensor_failure
+
+34:
+  name: WRONG_FW_ID
+  category: firmware
+  severity: Warning
+  cause: sensor_failure
+
+35:
+  name: I2C_CONFIG_REGISTER_READ_ERROR
+  category: sensor
+  severity: Warning
+  cause: sensor_failure
+  hint: Error in reading config register of I2C sensor (config register → probe type)
+
+36:
+  name: I2C_PROBE_REF_READ_ERROR
+  category: sensor
+  severity: Warning
+  cause: sensor_failure
+  hint: Wrong I2C type of probe detected
+
+37:
+  name: I2C_TEMP_REGISTER_READ_ERROR
+  category: sensor
+  severity: Warning
+  cause: sensor_failure
+  hint: Error in reading temperature register of I2C sensor
+
+38:
+  name: I2C_WRONG_VALUES_READ_ERROR
+  category: sensor
+  severity: Warning
+  cause: sensor_failure
+  hint: Values read out of sensor range
+
+64:
+  name: ADC_START_DMA_ERROR
+  category: sensor
+  severity: Warning
+  cause: sensor_failure
+  hint: ADC failed to start using DMA mode
+
+65:
+  name: ADC_WRONG_VALUES_READ_ERROR
+  category: sensor
+  severity: Warning
+  cause: sensor_failure
+  hint: Data read from ADC are out of range
+
+81:
+  name: SDF_DATA_NULL_ERROR
+  category: data
+  severity: Warning
+  cause: data_issue
+  hint: Null data won’t be sent (VIB/DNA)
+
+255:
+  name: UNKNOWN_ERROR
+  category: unknown
+  severity: Warning
+  cause: unknown
+  hint: NOT USED IN G22-3 FIRMWARE!!! Unknown Error.
+
+

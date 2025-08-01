@@ -63,6 +63,19 @@ def serialize_docs(docs):
     Retourne la liste des docs Mongo « plats » et JSON-safe.
     """
     return [flatten_doc(doc) for doc in docs]
+def clean_jsonable(obj):
+    """Convertit récursivement ObjectId, datetime, etc. en types JSON-safe."""
+    if isinstance(obj, list):
+        return [clean_jsonable(x) for x in obj]
+    if isinstance(obj, dict):
+        return {k: clean_jsonable(v) for k, v in obj.items()}
+    # ↓ conversions de base
+    from bson import ObjectId
+    from datetime import datetime, date
+    if isinstance(obj, (ObjectId, datetime, date)):
+        return str(obj)
+    return obj
+
 
 def extract_columns(docs):
     """

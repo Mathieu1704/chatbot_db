@@ -106,6 +106,23 @@ async def answer(
     if "fields" in tool_result:
         label = "Available fields: " if user_locale.lower().startswith("en") else "Champs disponibles : "
         return label + ", ".join(tool_result["fields"])
+    
+    # ------------------------------------------------------------------ #
+    # Résumé misconfig si counts présent, même si documents = []
+    # ------------------------------------------------------------------ #
+    if "counts" in tool_result and "documents" in tool_result:
+        cnt = tool_result["counts"]
+        if user_locale.lower().startswith("en"):
+            return (
+                f"Of {cnt['total_assets']} MP, {cnt['misconfigured']} are misconfigured "
+                f"and {cnt['healthy']} are healthy."
+            )
+        else:
+            return (
+                f"Sur {cnt['total_assets']} MP, {cnt['misconfigured']} sont mal configurés "
+                f"et {cnt['healthy']} sont sains."
+            )
+
 
         # ------------------------------------------------------------------ #
     # 3. Résultats de requête (documents)                                #

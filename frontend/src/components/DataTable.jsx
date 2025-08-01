@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef, useEffect } from 'react'
+import React, { useState, useMemo, useRef, useEffect, use } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import {
   useReactTable,
@@ -29,6 +29,16 @@ export default function DataTable({ columns, data, dataKey, onAssetClick }) {
     }
   }, [rows, dataKey])
 
+  //  Détermine automatiquement sur quelle colonne grouper
+  const groupingField = columns.includes('transmitter')
+    ? 'transmitter'
+    : columns.includes('_company')
+      ? '_company'
+      : columns.includes('company')
+        ? 'company'
+        : null;
+
+
   // Placeholder tant que les données arrivent
   if (!rows) {
     return (
@@ -38,24 +48,54 @@ export default function DataTable({ columns, data, dataKey, onAssetClick }) {
 
   // Réordonner `columns` pour avoir `asset` en premier
   const orderedColumns = useMemo(() => {
+    const misconfOrder = [
+      '_company',
+      'asset_id',
+      'err_name',
+      'severity',
+      'cause',
+      'last_acq',
+      'freq_err',
+      'errcodes'
+    ];
+    const isMisconfig = misconfOrder.slice(1).every(c => columns.includes(c));
+    if (isMisconfig) {
+      if(groupingField) {
+        return [
+          groupingField, ...misconfOrder
+        ]
+      }
+      return misconfOrder;
+    }
+
+    // Sinon, conserve le comportement existant : asset en premier si présent
     if (columns.includes('asset')) {
       const rest = columns.filter(c => c !== 'asset');
       return ['asset', ...rest];
     }
     return columns;
-  }, [columns]);
+  }, [columns, groupingField]);
 
 
   // ----------------------------------------------
   //  State: sorting, grouping, expanded rows
   // ----------------------------------------------
   const [sorting, setSorting] = useState([])
-  const hasCompany = columns.includes('_company')
-  const [grouping, setGrouping] = useState(hasCompany ? ['_company'] : [])
+  
+  const [grouping, setGrouping] = useState(
+    groupingField ? [groupingField] : []
+  )
+  const hasGrouping = Boolean(groupingField) 
+
+
   const [expanded, setExpanded] = useState({})
   const [globalFilter, setGlobalFilter] = useState('')
   const [columnFilters, setColumnFilters] = useState([])
-  const [openFilters, setOpenFilters] = useState({})
+  const [openFilters, setOpenFilters] = useState({})  
+  const isFirstRun = useRef(true)
+
+
+
 
   const toggleColumnFilter = (columnId) => {
     setOpenFilters(prev => ({
@@ -63,6 +103,7 @@ export default function DataTable({ columns, data, dataKey, onAssetClick }) {
       [columnId]: !prev[columnId],
     }))
   }
+
   useEffect(() => {
     const handleClickOutside = (e) => {
       if (!e.target.closest('[data-filter-popup]')) {
@@ -72,7 +113,6 @@ export default function DataTable({ columns, data, dataKey, onAssetClick }) {
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
-
 
 
   // ----------------------------------------------
@@ -111,17 +151,32 @@ export default function DataTable({ columns, data, dataKey, onAssetClick }) {
   const columnDefs = useMemo(
     () =>
       orderedColumns.map(key => {
+        if (key === 'totalMP') {
+          return {accessorKey: 'totalMP', header: 'Total MP'}
+        }
+
+        // Si on a un champ transmitter, on l’affiche tel quel
+        if (key === 'transmitter') {
+          return { accessorKey: 'transmitter', header: 'Transmitter' }
+        }
+        // Si vous voulez plutôt le nom humain du capteur
+        if (key === 'transmitterName') {
+          return { accessorKey: 'transmitterName', header: 'Capteur' }
+        }
+
         // Colonne “asset” cliquable
-        if (key === 'asset') {
+        if (key === 'asset' || key === 'asset_id') {
           return {
-            accessorKey: 'asset',
+            accessorKey: key,
             header: 'Asset',
             cell: info => {
               const assetId = info.getValue();
               const row     = info.row.original;
+              // priorise _company (multi-DB), sinon company (mono-DB)
+              const clientId = row._company ?? row.company;
               return (
                 <button
-                  onClick={() => onAssetClick(row._company, assetId)}
+                  onClick={() => onAssetClick(clientId, assetId)}
                   className="text-purple-600 hover:underline text-sm"
                 >
                   {assetId}
@@ -186,6 +241,9 @@ export default function DataTable({ columns, data, dataKey, onAssetClick }) {
   
   // === AJOUT : auto-dépliage des groupes APRÈS filtrage ===
 useEffect(() => {
+
+  if (!globalFilter && columnFilters.length === 0) return
+
   const newExpanded = {}
   const build = (rows) => {
     rows.forEach(row => {
@@ -369,9 +427,14 @@ useEffect(() => {
             {virtualRows.map(vRow => {
               const row = table.getRowModel().rows[vRow.index]
               const firstCell = row.getVisibleCells()[0]
-              const isGroup = hasCompany && firstCell?.getIsGrouped?.()
+              const isGroup = hasGrouping && firstCell?.getIsGrouped?.()
 
               if (isGroup) {
+                const leafRows    = row.getLeafRows()
+                const faultyCount = leafRows.length
+                const totalCount  = leafRows[0].original.totalMP || faultyCount
+                const txName      = leafRows[0].original.transmitterName
+
                 return (
                   <tr
                     key={row.id}
@@ -380,13 +443,13 @@ useEffect(() => {
                   >
                     <td
                       colSpan={row.getVisibleCells().length}
-                      style={{ paddingLeft: row.depth * 16 }}
                       className="px-2 py-1 text-left"
+                      style={{ paddingLeft: row.depth * 16 }}
                     >
                       <button className="mr-2 text-xs align-middle">
                         {row.getIsExpanded() ? '▾' : '▸'}
                       </button>
-                      {`${firstCell.getValue()} (${row.getLeafRows().length})`}
+                      {firstCell.getValue()} ({faultyCount}/{totalCount}) – {txName}
                     </td>
                   </tr>
                 )

@@ -12,11 +12,12 @@ from app.tools import sensor_tools as st
 from app.tools.sensor_tools import battery_overview, battery_list
 from app.tools.topology import get_network_topology, topology_to_d3
 from app.tools.dynamic_projection import build_dynamic_projection, build_dynamic_projection_multi
+from app.tools.misconfiguration import detect_misconfig
 from app.rag.vector_store import query_sensors
 from app.agent import planner, answerer
 from app.db import list_companies, find_company_candidates, execute_db_query, describe_schema, execute_cross_db_query, sample_fields, get_asset_by_id
 from app.utils.slugify_company import slugify_company
-from app.utils.serialize import serialize_docs, extract_columns
+from app.utils.serialize import serialize_docs, extract_columns, clean_jsonable
 #from app.search.run_query import run_query
 from app.agent.state import PENDING, CONVERSATIONS
 
@@ -463,6 +464,7 @@ async def handle_query(
         elif func_name == "get_asset_by_id":
             client_id = func_args["client_id"]
             asset_id  = func_args["asset_id"]
+
             asset_doc = get_asset_by_id(client_id, asset_id)
             if not asset_doc:
                 return {
@@ -473,7 +475,8 @@ async def handle_query(
             # Sérialisation plate + colonnes
             flat = serialize_docs([asset_doc])[0]
             cols = extract_columns([flat])
-            # Réponse utilisateur
+
+            # Génération de la réponse utilisateur
             answer_txt = await answerer.answer(
                 locale,
                 {"documents": [flat]},
@@ -485,6 +488,105 @@ async def handle_query(
                 "documents": [flat],
                 "columns":   cols
             }
+
+        # -----------------------------------------------------------------
+        # misconfig_overview
+        # -----------------------------------------------------------------
+        elif func_name == "misconfig_overview":
+            # 1) Résolution du nom de la base
+            comp_raw = func_args.get("company", "").strip()
+            comp = resolve_company(comp_raw)
+            if not comp:
+                return {
+                    "session_id": session_id,
+                    "answer": f"Je ne reconnais pas l’entreprise « {comp_raw} »."
+                }
+
+            # 2) Appel du helper
+            since = int(func_args.get("since_days", 30))
+            res = detect_misconfig(comp, since)
+
+            # 3) Ajout de _company aux items
+            for item in res["items"]:
+                item["_company"] = comp
+
+            # 4) Sérialisation des items
+            docs = serialize_docs(res["items"])
+            cols = extract_columns(docs)
+
+            # 5) Formatage de la réponse via answerer
+            answer_txt = await answerer.answer(
+                locale,
+                {"counts": res["counts"], "documents": docs},
+                text
+            )
+
+            payload = {
+                "session_id":  session_id,
+                "answer":      answer_txt,
+                # tableau
+                "documents":   docs,
+                "columns":     cols,
+                # graphes
+                "counts":         res["counts"],
+                "byTransmitter":  res["byTransmitter"],
+                "bySeverity":     res["bySeverity"],
+                "dailyNew":       res["dailyNew"],
+                "duration_ms": int((time.time() - start) * 1000)
+            }
+
+            # ── NOUVEAU : nettoyage JSON-safe ─────────────────────────────
+            return clean_jsonable(payload)
+
+
+
+        # -----------------------------------------------------------------
+        # misconfig_multi_overview
+        # -----------------------------------------------------------------
+        elif func_name == "misconfig_multi_overview":
+            # 1) Liste des bases à interroger
+            raw_ids = func_args.get("client_ids") or list_companies()
+            since   = int(func_args.get("since_days", 30))
+
+            # 2) Agréger tous les items avec _company
+            all_items = []
+            for raw in sorted(raw_ids, key=str.lower):
+                comp = resolve_company(raw) or raw
+                res  = detect_misconfig(comp, since)
+
+                for item in res["items"]:
+                    item["_company"] = comp
+                all_items.extend(res["items"])
+
+            # 3) Sérialisation
+            docs = serialize_docs(all_items)
+            cols = extract_columns(docs)
+
+            # 4) Retour JSON (comme execute_cross_db_query)
+            answer_txt = await answerer.answer(
+                locale,
+                {"documents": docs},
+                text
+            )
+            payload = {
+                "session_id":  session_id,
+                "answer":      answer_txt,
+                # tableau
+                "documents":   docs,
+                "columns":     cols,
+                # graphes
+                "counts":         res["counts"],
+                "byTransmitter":  res["byTransmitter"],
+                "bySeverity":     res["bySeverity"],
+                "dailyNew":       res["dailyNew"],
+                "duration_ms": int((time.time() - start) * 1000)
+            }
+
+            
+            return clean_jsonable(payload)
+
+
+
 
 
 

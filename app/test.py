@@ -1,68 +1,55 @@
 #!/usr/bin/env python3
 """
-Recherche vectorielle + filtres sur Atlas (M0 / MongoDB 7.x)
-------------------------------------------------------------
-• Génère un embedding OpenAI
-• Interroge la collection network_nodes avec $vectorSearch
+Test rapide de la détection de misconfig par asset.
 """
 
-import os
-import json
-from datetime import datetime, timedelta, timezone
+import argparse
+from datetime import datetime
+from pprint import pprint
+from app.tools.misconfiguration import detect_misconfig
 
-from dotenv import load_dotenv
-from pymongo import MongoClient
-import openai
 
-# ─────────────────────────────── 1) CONFIG ────────────────────────────────
-load_dotenv()                                      # charge .env dans l’environnement
-client = MongoClient(os.getenv("MONGODB_URI"))     # URI Atlas standard
-openai.api_key = os.getenv("OPENAI_API_KEY")
+def main():
+    p = argparse.ArgumentParser(
+        description="Test detect_misconfig (asset level)"
+    )
+    p.add_argument("--company", required=True)
+    p.add_argument("--days",       type=int, default=20)
+    p.add_argument("--window",     type=int, default=10)
+    p.add_argument("--threshold",  type=int, default=3)
+    args = p.parse_args()
 
-DB_NAME        = "Icare_Brussels"
-COLLECTION     = "network_nodes"
-VECTOR_INDEX   = "vector_index"    # nom exact de l’index dans l’UI Atlas
-K              = 200                 # top-k
-NUM_CANDIDATES = 10000               # règle empirique ≈ 20–50 × k
+    print(f"[INFO] MongoDB reachable")
+    print(f"[{datetime.now():%Y-%m-%d %H:%M:%S}] Building baseline over last {args.days} days …")
+    # Baseline doit être lancée avant ce test si besoin
 
-# ───────────────────────────── 2) EMBEDDING ───────────────────────────────
-query_text = "surchauffe"
+    print(f"[{datetime.now():%Y-%m-%d %H:%M:%S}] Running misconfiguration detection (window={args.window}, freq_threshold={args.threshold}) …\n")
 
-resp = openai.embeddings.create(
-    model="text-embedding-3-small",
-    input=[query_text],
-    dimensions=384           # même dimension que l’index
-)
-embedding = resp.data[0].embedding     # liste de floats (dim = 384)
+    report = detect_misconfig(
+        company        = args.company,
+        since_days     = args.days,
+        last_n         = args.window,
+        freq_threshold = args.threshold
+    )
 
-# ──────────────────────── 3) PIPELINE VECTORSEARCH ───────────────────────
-seuil = datetime.now(timezone.utc) - timedelta(days=2)   # date « aware »
+    counts = report["counts"]
+    print("=== SUMMARY ===")
+    pprint(counts)
+    print()
 
-pipeline = [
-    {
-        "$vectorSearch": {
-            "index": VECTOR_INDEX,
-            "path":  "embedding",
-            "queryVector": embedding,
-            "numCandidates": NUM_CANDIDATES,   # obligatoire en ANN
-            "limit": K,                        # nombre de résultats
-            "filter": {
-                "last_com": {"$lt": seuil},
-                "batt":     {"$lt": 3500}
-            }
-        }
-    }
-]
+    if counts["misconfigured"] == 0:
+        print("No misconfigured assets detected 🎉")
+    else:
+        print("── List of misconfigured assets ──")
+        for idx, doc in enumerate(report["items"], 1):
+            print(f"\n#{idx} • asset_id : {doc['asset_id']}")
+            print(f"   last_acq : {doc['last_acq']}")
+            print(f"   freq_err : {doc['freq_err']}")
+            print(f"   errcodes : {doc['errcodes']}")
+            print(f"   err_name : {doc['err_name']}")
+            print(f"   severity : {doc['severity']}")
+            print(f"   cause    : {doc['cause']}")
 
-# ──────────────────────── 4) EXÉCUTION & AFFICHAGE ───────────────────────
-db = client[DB_NAME]
-results = list(db[COLLECTION].aggregate(pipeline))
 
-print("\n── Résultats vectorSearch + filtres ──\n")
-for doc in results:
-    addr      = doc.get("address", "n/a")
-    last_com  = doc.get("last_com")
-    batt      = doc.get("batt")
-    print(f"• {addr:20s}  last_com: {last_com}  batt: {batt}")
-
-print(f"\n{len(results)} document(s) trouvé(s).\n")
+if __name__ == "__main__":
+    main()

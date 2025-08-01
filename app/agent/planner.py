@@ -201,22 +201,70 @@ FUNC_SCHEMAS = [
     },
     {
         "name": "get_asset_by_id",
-        "description": "Récupère un document dans la collection assets pour un ObjectId donné.",
+        "description": "Récupère un document depuis la collection 'assets' d'une base MongoDB donnée (nom insensible à la casse) pour un ObjectId.",
         "parameters": {
-        "type": "object",
-        "properties": {
+            "type": "object",
+            "properties": {
             "client_id": {
-            "type": "string",
-            "description": "Nom de la base à interroger"
+                "type": "string",
+                "description": "Nom de la base (ex. “Cargill” ou “cargill”). Insensible à la casse."
             },
             "asset_id": {
-            "type": "string",
-            "description": "ObjectId de l’asset à récupérer"
+                "type": "string",
+                "description": "ObjectId (24 caractères hexadécimaux) de l’asset à récupérer."
             }
-        },
-        "required": ["client_id", "asset_id"]
+            },
+            "required": ["client_id", "asset_id"]
         }
+    },
+    {
+      "name": "misconfig_overview",
+      "description": (
+        "Retourne la liste des tasks/transmetteurs mal configurés "
+        "pour une entreprise donnée."
+      ),
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "company": {
+            "type": "string",
+            "description": "Nom complet de l’entreprise (ex. ‘Icare Brussels’)"
+          },
+          "since_days": {
+            "type": "integer",
+            "description": "Période d’analyse en jours",
+            "default": 30
+          }
+        },
+        "required": ["company"]
+      }
+    },
+    {
+      "name": "misconfig_multi_overview",
+      "description": (
+        "Retourne la liste des tasks/transmetteurs mal configurés "
+        "sur plusieurs entreprises à la fois."
+      ),
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "client_ids": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": (
+              "Liste des noms de bases Mongo (ex. ['Icare_Brussels','Cabot']); "
+              "omis ⇒ toutes"
+            )
+          },
+          "since_days": {
+            "type": "integer",
+            "description": "Période d’analyse en jours",
+            "default": 30
+          }
+        }
+      }
     }
+
 ]
 
 def _system_prompt(locale: str) -> str:
@@ -255,7 +303,9 @@ def _system_prompt(locale: str) -> str:
     6. **Recherche floue / anomalie / similarité / texte libre**  
        → `run_query` (toujours avec un `limit` ≤ 10 000, `k` = 100 par défaut).
 
-    7. **Sinon** → `rag_search`.
+    7. **Tasks mal configurées / misconfigured / bad task” → misconfig_overview ou misconfig_multi_overview si plusieurs bases citées.
+
+    8. **Sinon** → `rag_search`.
 
     ──────────────────────────────────────────────────────────────────────
     GESTION DES COLLECTIONS
@@ -273,7 +323,7 @@ def _system_prompt(locale: str) -> str:
           ajoute automatiquement le filtre `{"node_type": 1|2|3}`.
         - Si des champs spécifiques sont demandés → construis `projection`
           avec ces champs **+ `address`** et masque `_id` si non nécessaire.
-        - Si aucun champ n’est cité (ex : donne moi tous les capteurs/gateways/extenders de Eurial) → **AJOUTE QUAND MEME** la projection : `{"address":1,"batt":1,"last_com":1,"_id":0}`.
+        - Si aucun champ n’est cité (ex : donne moi tous les capteurs/gateways/extenders de Eurial) → **AJOUTE OBLIGATOIREMENT ** la projection : `{"address":1,"batt":1,"last_com":1,"_id":0}`.
 
     • **Toutes les autres collections**  
         - Si la question **nomme** un ou plusieurs champs → mets-les dans

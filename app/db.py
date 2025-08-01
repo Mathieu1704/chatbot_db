@@ -1,5 +1,7 @@
 import os
 import json
+import logging 
+from bson.errors import InvalidId
 from bson import ObjectId
 from functools import lru_cache
 from itertools import chain
@@ -11,15 +13,12 @@ from typing import Optional, Dict, Any, List
 import difflib
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-
-
-
 # Charger .env
 load_dotenv()
 
 # Puis, juste :
 MONGODB_URI = os.getenv("MONGODB_URI")
-client = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=5_000)
+client = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=10_000)
 
 try:
     client.admin.command("ping")
@@ -90,6 +89,11 @@ def find_company_candidates(input_name: str) -> list[str]:
         slug_map[slugify_company(name)] = name
         slug_map[slugify_company(name.replace("_", " "))] = name
     print(f"[DEBUG] slug_map keys: {list(slug_map.keys())}")
+
+    # Si aucun slug n’est disponible (aucune DB network_nodes), on ne fuzzy-match pas
+    if not slug_map:
+        return []
+
 
     probe = slugify_company(input_name)
     print(f"[DEBUG] input_name='{input_name}' → probe='{probe}'")
@@ -216,10 +220,35 @@ def sample_fields(client_id: str, collection: str, size: int = 50) -> list[str]:
 
 def get_asset_by_id(client_id: str, asset_id: str) -> dict | None:
     """
-    Retourne le document complet de la collection 'assets'
-    pour l’ObjectId donné (ou None si introuvable).
+    Retourne le document de la collection 'assets'
+    pour l’ObjectId donné, dans la DB dont le nom correspond
+    à client_id (insensible à la casse). 
     """
+    # 1) Valider l’ObjectId
     try:
-        return client[client_id]["assets"].find_one({"_id": ObjectId(asset_id)})
-    except Exception:
+        oid = ObjectId(asset_id)
+    except InvalidId as e:
+        logging.error(f"get_asset_by_id: asset_id invalide « {asset_id} » – {e}")
+        return None
+
+    # 2) Trouver la DB en insensible à la casse
+    db_name = next(
+        (db for db in client.list_database_names() if db.lower() == client_id.lower()),
+        None
+    )
+    if not db_name:
+        logging.error(f"get_asset_by_id: DB introuvable – demandé « {client_id} »")
+        return None
+    db = client[db_name]
+
+    # 3) Vérifier que la collection 'assets' existe
+    if "assets" not in db.list_collection_names():
+        logging.error(f"get_asset_by_id: collection 'assets' introuvable dans {db_name}")
+        return None
+
+    # 4) Récupérer le document
+    try:
+        return db["assets"].find_one({"_id": oid})
+    except Exception as e:
+        logging.exception(f"get_asset_by_id: erreur find_one sur {db_name}.assets pour {asset_id}")
         return None

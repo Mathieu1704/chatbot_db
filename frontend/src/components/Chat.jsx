@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react'
 import axios from 'axios'
 import DataTable from './DataTable'
+import MisconfigDashboard from './MisconfigDashboard'
 import AssetDetailModal from './AssetDetailModal'
 import { useNavigate } from 'react-router-dom'
 import { useTopologyStore } from '@/store/useTopologyStore'
@@ -147,7 +148,7 @@ export default function Chat () {
 
     try {
       const res = await axios.post('/api/chat', { message: text, locale: 'fr' })
-      const {answer, documents, columns, type, duration_ms, graph, company } = res.data
+      const {answer, documents, columns, counts, type, duration_ms, graph, company } = res.data
 
       // ── Cas Topologie ─────────────────────────────
       if (graph) {
@@ -190,6 +191,10 @@ export default function Chat () {
             from: 'table',
             data,
             columns: cols,
+            counts,
+            bySeverity: res.data.bySeverity,
+            byTransmitter: res.data.byTransmitter,
+            dailyNew: res.data.dailyNew,
             collapsed: false,
             timestamp: Date.now()
           }
@@ -312,8 +317,12 @@ export default function Chat () {
 
           if (msg.from === 'table') {
             const rowCount = msg.data ? msg.data.length : msg.rows || 0
+            const counts = msg.counts
             return (
               <div key={i} className='mt-4 mb-10 animate-fade-in'>
+                
+              
+
                 {/* info barre */}
                 <div className='flex items-center justify-between mb-1'>
                   <span className='text-xs text-gray-600'>
@@ -328,6 +337,21 @@ export default function Chat () {
                 </div>
                 {!msg.collapsed && (
                   <div className='rounded-lg border border-gray-200 shadow-sm bg-white p-2 overflow-x-auto'>
+
+                    {/* ----- DASHBOARD (si les données sont présentes) ----- */}
+                    {msg.bySeverity && msg.byTransmitter && msg.dailyNew && (
+                      <div className="mb-6">
+                        <MisconfigDashboard
+                          data={{
+                            counts:        msg.counts,
+                            bySeverity:    msg.bySeverity,
+                            byTransmitter: msg.byTransmitter,
+                            dailyNew:      msg.dailyNew
+                          }}
+                        />
+                      </div>
+                    )}
+
                     {msg.data ? (
                       <DataTable
                         columns={msg.columns}

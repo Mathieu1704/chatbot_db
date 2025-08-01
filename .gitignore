@@ -22,3 +22,11 @@ app/rag/store.faiss/
 *.pkl
 *.meta
 app.zip
+*.env*
+
+roquette_dump/
+features*
+others/
+test_ml.py
+extract.py
+app/frontend/node_modules/package-lock.json
